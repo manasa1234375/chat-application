@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Chat</title>
+    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.22.5/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        #chat-container {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #f9fafb;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 5px;
+        }
+        .message.self {
+            background-color: #34D399;
+            margin-left: 20%;
+        }
+        .message.other {
+            background-color: #E5E7EB;
+            margin-right: 20%;
+        }
+        .error-message {
+            color: red;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        .status-message {
+            color: green;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body class="p-4 bg-gray-100">
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const ChatApp = () => {
+            const [username, setUsername] = useState('');
+            const [messages, setMessages] = useState([]);
+            const [input, setInput] = useState('');
+            const [socket, setSocket] = useState(null);
+            const [error, setError] = useState(null);
+            const [status, setStatus] = useState('Initializing...');
+            const chatContainerRef = useRef(null);
+
+            // Load username from localStorage
+            useEffect(() => {
+                const storedUsername = localStorage.getItem('chatUsername');
+                if (storedUsername) {
+                    setUsername(storedUsername);
+                }
+            }, []);
+
+            // Initialize Socket.IO
+            useEffect(() => {
+                if (!window.io) {
+                    setError('Socket.IO library failed to load. Check CDN connection.');
+                    return;
+                }
+
+                try {
+                    const socketInstance = io('http://localhost:3000', {
+                        reconnectionAttempts: 3,
+                        timeout: 5000,
+                        transports: ['websocket']
+                    });
+                    setSocket(socketInstance);
+
+                    socketInstance.on('connect', () => {
+                        setStatus('Connected to server');
+                        setError(null);
+                        console.log('Socket connected:', socketInstance.id);
+                        if (username) {
+                            socketInstance.emit('join', username);
+                        }
+                    });
+
+                    socketInstance.on('connect_error', (err) => {
+                        setError(`Connection failed: ${err.message}`);
+                        setStatus('Disconnected');
+                        console.error('Socket connect error:', err);
+                    });
+
+                    socketInstance.on('message', (msg) => {
+                        setMessages((prev) => [...prev, msg]);
+                        console.log('Received message:', msg);
+                    });
+
+                    socketInstance.on('user-joined', (user) => {
+                        setMessages((prev) => [...prev, { user: 'System', text: `${user} joined the chat` }]);
+                    });
+
+                    socketInstance.on('user-left', (user) => {
+                        setMessages((prev) => [...prev, { user: 'System', text: `${user} left the chat` }]);
+                    });
+
+                    return () => {
+                        socketInstance.disconnect();
+                        console.log('Socket disconnected');
+                    };
+                } catch (err) {
+                    setError(`Socket initialization failed: ${err.message}`);
+                    console.error('Socket init error:', err);
+                }
+            }, []);
+
+            // Join chat when username is set
+            useEffect(() => {
+                if (socket && username) {
+                    socket.emit('join', username);
+                    localStorage.setItem('chatUsername', username);
+                }
+            }, [socket, username]);
+
+            // Scroll to bottom of chat
+            useEffect(() => {
+                if (chatContainerRef.current) {
+                    chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+                }
+            }, [messages]);
+
+            // Handle message sending
+            const sendMessage = () => {
+                if (!socket) {
+                    setError('Not connected to server.');
+                    return;
+                }
+                if (!username) {
+                    setError('Please set a username.');
+                    return;
+                }
+                if (input.trim()) {
+                    const message = { user: username, text: input };
+                    socket.emit('message', message);
+                    setMessages((prev) => [...prev, message]);
+                    setInput('');
+                }
+            };
+
+            // Handle Enter key
+            const handleKeyPress = (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            };
+
+            return (
+                <div className="container mx-auto max-w-md">
+                    <h1 className="text-2xl font-bold mb-4 text-gray-800">Real-Time Chat</h1>
+                    {!username ? (
+                        <div className="mb-4">
+                            <input
+                                type="text"
+                                className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="Enter your username"
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                onKeyPress={(e) => {
+                                    if (e.key === 'Enter' && input.trim()) {
+                                        setUsername(input.trim());
+                                        setInput('');
+                                    }
+                                }}
+                            />
+                        </div>
+                    ) : (
+                        <>
+                            <p className="text-sm text-gray-600 mb-2">Logged in as: {username}</p>
+                            <div id="chat-container" ref={chatContainerRef} className="mb-4 rounded">
+                                {messages.map((msg, index) => (
+                                    <div
+                                        key={index}
+                                        className={`message ${msg.user === username ? 'self' : msg.user === 'System' ? 'other text-gray-600' : 'other'}`}
+                                    >
+                                        <strong>{msg.user}: </strong>{msg.text}
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex space-x-2">
+                                <textarea
+                                    className="flex-1 p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    rows="3"
+                                    placeholder="Type a message..."
+                                    value={input}
+                                    onChange={(e) => setInput(e.target.value)}
+                                    onKeyPress={handleKeyPress}
+                                />
+                                <button
+                                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                                    onClick={sendMessage}
+                                >
+                                    Send
+                                </button>
+                            </div>
+                            <p className="status-message">{status}</p>
+                            {error && <p className="error-message">{error}</p>}
+                        </>
+                    )}
+                </div>
+            );
+        };
+
+        try {
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<ChatApp />);
+            console.log('React app rendered successfully');
+        } catch (err) {
+            console.error('React render error:', err);
+            document.getElementById('root').innerHTML = 
+                `<p style="color: red;">Failed to render app: ${err.message}</p>`;
+        }
+    </script>
+</body>
+</html>
